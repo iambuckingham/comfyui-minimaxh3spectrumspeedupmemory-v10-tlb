@@ -12,15 +12,21 @@ RUN comfy node install --exit-on-fail comfyui_fearnworksnodes@0.1.2 || (echo "WA
 RUN comfy node install --exit-on-fail comfyui_memory_cleanup@1.1.3 || (echo "WARN: comfyui_memory_cleanup@1.1.3 unavailable in registry, falling back to latest" >&2 && comfy node install --exit-on-fail comfyui_memory_cleanup)
 RUN comfy node install --exit-on-fail rgthree-comfy
 RUN comfy node install --exit-on-fail crt-nodes
-# H3 sampling acceleration
+
+# H3 sampling acceleration.  Spectrum has no third-party Python dependency;
+# it must be present as a custom node for the API workflow to validate.
 RUN git clone --depth=1 --branch v0.2.26 https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git /comfyui/custom_nodes/ComfyUI-Spectrum-MiniMax-H3
 
-# Require SageAttention; image build stops if it cannot install for this GPU stack.
-ARG SAGEATTENTION_PIP_SPEC="sageattention"
-RUN python -m pip install --no-cache-dir "${SAGEATTENTION_PIP_SPEC}" && \
-    python -c "import sageattention; print('SageAttention installed')"
+# The KJ SageAttention patch needs the compiled v2 CUDA extension.  Do not use
+# the tiny v1.0.6 Triton-only PyPI wheel: it imports successfully but provides
+# none of the H3 CUDA APIs.  The import checks deliberately fail the image
+# build if the Linux/PyTorch/CUDA/Blackwell combination is incompatible.
+RUN python -m pip install --no-cache-dir --no-build-isolation "sageattention==2.2.0" && \
+    python -c "from sageattention import sageattn, sageattn_qk_int8_pv_fp16_cuda; print('SageAttention v2 CUDA APIs available')"
 
-# Enable ComfyUI fast mode for both Serverless startup paths.
+# ComfyUI accepts --fast on this base image.  Apply it to both API-server and
+# queue-worker launch paths; workflow-scoped KJ SageAttention remains preferred
+# over a global attention override.
 RUN sed -i 's/--disable-metadata --listen --verbose/--disable-metadata --listen --fast --verbose/' /start.sh && \
     sed -i 's/--disable-metadata --verbose/--disable-metadata --fast --verbose/' /start.sh
 

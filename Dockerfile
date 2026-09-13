@@ -1,10 +1,8 @@
 # clean base image containing only comfyui, comfy-cli and comfyui-manager
 FROM runpod/worker-comfyui:5.10.0-base
-
 # build-time tokens for gated downloads — never baked into final image.
 # pass via: docker build --build-arg HF_TOKEN=$HF_TOKEN ...
 ARG HF_TOKEN=""
-
 # install custom nodes into comfyui
 RUN git clone https://github.com/kijai/ComfyUI-KJNodes /comfyui/custom_nodes/ComfyUI-KJNodes && cd /comfyui/custom_nodes/ComfyUI-KJNodes && (git checkout 79f529a84a8c20fe5dcdfa984c6be7a94102c014 2>/dev/null || (git fetch origin 79f529a84a8c20fe5dcdfa984c6be7a94102c014 --depth=1 && git checkout 79f529a84a8c20fe5dcdfa984c6be7a94102c014) || echo "WARN: commit 79f529a84a8c20fe5dcdfa984c6be7a94102c014 unreachable in https://github.com/kijai/ComfyUI-KJNodes, falling back to default branch HEAD")
 RUN comfy node install --exit-on-fail comfyui_nvidia_rtx_nodes@0.1.3 --mode remote || (echo "WARN: comfyui_nvidia_rtx_nodes@0.1.3 unavailable in registry, falling back to latest" >&2 && comfy node install --exit-on-fail comfyui_nvidia_rtx_nodes --mode remote)
@@ -12,33 +10,30 @@ RUN comfy node install --exit-on-fail comfyui_fearnworksnodes@0.1.2 || (echo "WA
 RUN comfy node install --exit-on-fail comfyui_memory_cleanup@1.1.3 || (echo "WARN: comfyui_memory_cleanup@1.1.3 unavailable in registry, falling back to latest" >&2 && comfy node install --exit-on-fail comfyui_memory_cleanup)
 RUN comfy node install --exit-on-fail rgthree-comfy
 RUN comfy node install --exit-on-fail crt-nodes
-
 # H3 sampling acceleration.  Spectrum has no third-party Python dependency;
 # it must be present as a custom node for the API workflow to validate.
 RUN git clone --depth=1 --branch v0.2.26 https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git /comfyui/custom_nodes/ComfyUI-Spectrum-MiniMax-H3
-
-# The KJ SageAttention patch needs the compiled v2 CUDA extension.  Do not use
-# the tiny v1.0.6 Triton-only PyPI wheel: it imports successfully but provides
-# none of the H3 CUDA APIs.  The import checks deliberately fail the image
-# build if the Linux/PyTorch/CUDA/Blackwell combination is incompatible.
-RUN python -m pip install --no-cache-dir --no-build-isolation "sageattention==2.2.0" && \
-    python -c "from sageattention import sageattn, sageattn_qk_int8_pv_fp16_cuda; print('SageAttention v2 CUDA APIs available')"
-
+# The KJ SageAttention patch needs the compiled v2 CUDA extension. PyPI only
+# publishes the obsolete v1.0.6 package, so build the official v2.2.0 source
+# for this Blackwell (sm_120) deployment. Image builders have no GPU attached;
+# TORCH_CUDA_ARCH_LIST provides the explicit compile target.
+RUN git clone --depth=1 --branch v2.2.0 https://github.com/thu-ml/SageAttention.git /tmp/SageAttention && \
+    cd /tmp/SageAttention && \
+    TORCH_CUDA_ARCH_LIST="12.0" EXT_PARALLEL=4 MAX_JOBS=4 NVCC_APPEND_FLAGS="--threads 8" python setup.py install && \
+    python -c "from sageattention import sageattn, sageattn_qk_int8_pv_fp16_cuda; print('SageAttention v2 CUDA APIs available')" && \
+    rm -rf /tmp/SageAttention
 # ComfyUI accepts --fast on this base image.  Apply it to both API-server and
 # queue-worker launch paths; workflow-scoped KJ SageAttention remains preferred
 # over a global attention override.
 RUN sed -i 's/--disable-metadata --listen --verbose/--disable-metadata --listen --fast --verbose/' /start.sh && \
     sed -i 's/--disable-metadata --verbose/--disable-metadata --fast --verbose/' /start.sh
-
 # download models into comfyui
 RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors' --relative-path models/diffusion_models --filename 'minimax_h3_fl2va_pruned_int8_convrot.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done
 RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors' --relative-path models/text_encoders --filename 'qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done
 RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors' --relative-path models/vae --filename 'minimax_h3_video_vae_fp16.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done
 RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors' --relative-path models/vae --filename 'minimax_h3_audio_vae_fp32.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done
 RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Merserk/MiniMax-H3-INT4-ConvRot/resolve/main/minimax_h3_fl2va_pruned_int4_convrot.safetensors' --relative-path models/diffusion_models --filename 'minimax_h3_fl2va_pruned_int4_convrot.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done
-
 # copy all input data (like images or videos) into comfyui (uncomment and adjust if needed)
 # COPY input/ /comfyui/input/
-
 # user-provided inputs override the auto-generated placeholders above.
 RUN wget --progress=dot:giga -O '/comfyui/input/1024834.jpg' "https://cool-anteater-319.convex.cloud/api/storage/70b72fe4-c12d-4055-a0ff-e0453bfc80e2"

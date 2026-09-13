@@ -12,6 +12,17 @@ RUN comfy node install --exit-on-fail comfyui_fearnworksnodes@0.1.2 || (echo "WA
 RUN comfy node install --exit-on-fail comfyui_memory_cleanup@1.1.3 || (echo "WARN: comfyui_memory_cleanup@1.1.3 unavailable in registry, falling back to latest" >&2 && comfy node install --exit-on-fail comfyui_memory_cleanup)
 RUN comfy node install --exit-on-fail rgthree-comfy
 RUN comfy node install --exit-on-fail crt-nodes
+# H3 sampling acceleration
+RUN git clone --depth=1 --branch v0.2.26 https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git /comfyui/custom_nodes/ComfyUI-Spectrum-MiniMax-H3
+
+# Require SageAttention; image build stops if it cannot install for this GPU stack.
+ARG SAGEATTENTION_PIP_SPEC="sageattention"
+RUN python -m pip install --no-cache-dir "${SAGEATTENTION_PIP_SPEC}" && \
+    python -c "import sageattention; print('SageAttention installed')"
+
+# Enable ComfyUI fast mode for both Serverless startup paths.
+RUN sed -i 's/--disable-metadata --listen --verbose/--disable-metadata --listen --fast --verbose/' /start.sh && \
+    sed -i 's/--disable-metadata --verbose/--disable-metadata --fast --verbose/' /start.sh
 
 # download models into comfyui
 RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors' --relative-path models/diffusion_models --filename 'minimax_h3_fl2va_pruned_int8_convrot.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done

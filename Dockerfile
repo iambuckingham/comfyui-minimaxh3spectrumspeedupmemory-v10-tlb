@@ -11,6 +11,7 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
         ninja-build && \
+        python3.12-dev && \
     rm -rf /var/lib/apt/lists/*
 # build-time tokens for gated downloads — never baked into final image.
 # pass via: docker build --build-arg HF_TOKEN=$HF_TOKEN ...

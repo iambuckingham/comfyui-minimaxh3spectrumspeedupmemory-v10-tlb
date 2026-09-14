@@ -42,6 +42,7 @@ RUN git clone --depth=1 --branch v0.2.26 https://github.com/xmarre/ComfyUI-Spect
 RUN git clone --depth=1 --branch v2.2.0 https://github.com/thu-ml/SageAttention.git /tmp/SageAttention && \
     cd /tmp/SageAttention && \
     CC=gcc CXX=g++ TORCH_CUDA_ARCH_LIST="12.0" EXT_PARALLEL=4 MAX_JOBS=4 NVCC_APPEND_FLAGS="--threads 8" python setup.py install && \
+    cd / && \
     python -c "from sageattention import sageattn, sageattn_qk_int8_pv_fp16_cuda; print('SageAttention v2 CUDA APIs available')" && \
     rm -rf /tmp/SageAttention
 

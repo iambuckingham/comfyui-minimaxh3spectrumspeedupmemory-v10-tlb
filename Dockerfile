@@ -1,5 +1,12 @@
-# clean base image containing only comfyui, comfy-cli and comfyui-manager
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04 AS cuda_devel
+# Keep the RunPod ComfyUI worker image; add only the CUDA 12.8 development
+# toolkit needed to compile SageAttention v2 for Blackwell (sm_120).
 FROM runpod/worker-comfyui:5.10.0-base
+COPY --from=cuda_devel /usr/local/cuda-12.8 /usr/local/cuda-12.8
+RUN ln -s /usr/local/cuda-12.8 /usr/local/cuda
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 # build-time tokens for gated downloads — never baked into final image.
 # pass via: docker build --build-arg HF_TOKEN=$HF_TOKEN ...
 ARG HF_TOKEN=""
@@ -10,19 +17,19 @@ RUN comfy node install --exit-on-fail comfyui_fearnworksnodes@0.1.2 || (echo "WA
 RUN comfy node install --exit-on-fail comfyui_memory_cleanup@1.1.3 || (echo "WARN: comfyui_memory_cleanup@1.1.3 unavailable in registry, falling back to latest" >&2 && comfy node install --exit-on-fail comfyui_memory_cleanup)
 RUN comfy node install --exit-on-fail rgthree-comfy
 RUN comfy node install --exit-on-fail crt-nodes
-# H3 sampling acceleration.  Spectrum has no third-party Python dependency;
+# H3 sampling acceleration. Spectrum has no third-party Python dependency;
 # it must be present as a custom node for the API workflow to validate.
 RUN git clone --depth=1 --branch v0.2.26 https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3.git /comfyui/custom_nodes/ComfyUI-Spectrum-MiniMax-H3
-# The KJ SageAttention patch needs the compiled v2 CUDA extension. PyPI only
-# publishes the obsolete v1.0.6 package, so build the official v2.2.0 source
-# for this Blackwell (sm_120) deployment. Image builders have no GPU attached;
-# TORCH_CUDA_ARCH_LIST provides the explicit compile target.
+# KJ's SageAttention patch needs the compiled v2 CUDA extension. PyPI only
+# publishes the obsolete v1.0.6 package, so build official v2.2.0 for
+# Blackwell (sm_120). Image builders have no GPU; TORCH_CUDA_ARCH_LIST
+# supplies the explicit compilation target.
 RUN git clone --depth=1 --branch v2.2.0 https://github.com/thu-ml/SageAttention.git /tmp/SageAttention && \
     cd /tmp/SageAttention && \
     TORCH_CUDA_ARCH_LIST="12.0" EXT_PARALLEL=4 MAX_JOBS=4 NVCC_APPEND_FLAGS="--threads 8" python setup.py install && \
     python -c "from sageattention import sageattn, sageattn_qk_int8_pv_fp16_cuda; print('SageAttention v2 CUDA APIs available')" && \
     rm -rf /tmp/SageAttention
-# ComfyUI accepts --fast on this base image.  Apply it to both API-server and
+# ComfyUI accepts --fast on this base image. Apply it to both API-server and
 # queue-worker launch paths; workflow-scoped KJ SageAttention remains preferred
 # over a global attention override.
 RUN sed -i 's/--disable-metadata --listen --verbose/--disable-metadata --listen --fast --verbose/' /start.sh && \

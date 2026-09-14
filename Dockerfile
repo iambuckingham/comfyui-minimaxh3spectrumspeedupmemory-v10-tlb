@@ -7,6 +7,11 @@ RUN ln -s /usr/local/cuda-12.8 /usr/local/cuda
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=/usr/local/cuda/bin:${PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        ninja-build && \
+    rm -rf /var/lib/apt/lists/*
 # build-time tokens for gated downloads — never baked into final image.
 # pass via: docker build --build-arg HF_TOKEN=$HF_TOKEN ...
 ARG HF_TOKEN=""
@@ -26,7 +31,7 @@ RUN git clone --depth=1 --branch v0.2.26 https://github.com/xmarre/ComfyUI-Spect
 # supplies the explicit compilation target.
 RUN git clone --depth=1 --branch v2.2.0 https://github.com/thu-ml/SageAttention.git /tmp/SageAttention && \
     cd /tmp/SageAttention && \
-    TORCH_CUDA_ARCH_LIST="12.0" EXT_PARALLEL=4 MAX_JOBS=4 NVCC_APPEND_FLAGS="--threads 8" python setup.py install && \
+    CC=gcc CXX=g++ TORCH_CUDA_ARCH_LIST="12.0" EXT_PARALLEL=4 MAX_JOBS=4 NVCC_APPEND_FLAGS="--threads 8" python setup.py install && \
     python -c "from sageattention import sageattn, sageattn_qk_int8_pv_fp16_cuda; print('SageAttention v2 CUDA APIs available')" && \
     rm -rf /tmp/SageAttention
 # ComfyUI accepts --fast on this base image. Apply it to both API-server and
